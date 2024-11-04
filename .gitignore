@@ -3,3 +3,6 @@
 /images
 *.log
 *.csv
+*pkl*
+/cache
+/logs
