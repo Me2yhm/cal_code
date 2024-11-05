@@ -11,53 +11,22 @@ import numpy as np
 import pandas as pd
 import polars as pl
 from loguru import logger
-from pymongo import MongoClient
 
-COLLECTION = MongoClient(os.getenv("MONGODB_URL")).Quote.Tick2Trade
-ROOT = Path(__file__).parent
-MAX_SIZE = 500
-COLUMNS = [
-    "date",
-    "investor_id",
-    "order_sys_id",
-    "tick2trade",
-    "tick2execute",
-    "execute2send",
-    "send2success",
-    "status",
-]
-COLUMN_TYPES_PD = list(
-    zip(
-        COLUMNS,
-        ["<U10", "<U10", "<U10", np.int64, np.int64, np.int64, np.int64, "<U20"],
-    )
+from utils import get_accessed_volume, get_date, search_all_file
+from const import (
+    COLUMNS,
+    COLUMN_TYPES_PD,
+    COLUMN_TYPES_PL,
+    COLLECTION,
+    MAX_SIZE,
+    ROOT,
+    OrderStatus,
 )
-COLUMN_TYPES_PL = list(
-    zip(
-        COLUMNS,
-        [
-            pl.String,
-            pl.String,
-            pl.String,
-            pl.Int64,
-            pl.Int64,
-            pl.Int64,
-            pl.Int64,
-            pl.String,
-        ],
-    )
-)
+
+
 logger.remove()
 logger.add(sys.stdout, level="ERROR")
 logger.add("./logs/tick2trade.log", level="INFO", rotation="1MB", retention="1 days")
-
-
-class OrderStatus:
-    SUCCESS = "SUCCESS"
-    FAILED_FOR_SNAP = "FAILED_FOR_SNAP"
-    FAILED_FOR_COMPLETION = "FAILED_FOR_COMPLETION"
-    DENIED = "DENIED"
-    UKNOWN = "UNKNOWN"
 
 
 class LogParser:
@@ -433,45 +402,6 @@ def check_failed_status(parser: LogParser):
     return OrderStatus.FAILED_FOR_SNAP
 
 
-def get_accessed_volume(
-    last_price,
-    last_volume,
-    order_price,
-    bid1,
-    ask1,
-    bid1_volume,
-    ask1_volume,
-    direction,
-):
-    """计算可以成交的量"""
-    match direction:
-        case "买入":
-            if ask1 >= order_price:
-                if last_price >= order_price:
-                    return 0
-                return last_volume
-            else:
-                return last_volume + ask1_volume
-        case "卖出":
-            if bid1 <= order_price:
-                if last_price <= order_price:
-                    return 0
-                return last_volume
-            else:
-                return last_volume + bid1_volume
-        case _:
-            raise ValueError(f"direction must be 买入 or 卖出, but got {direction}")
-
-
-def others_price_better(order_price, current_price, direction):
-    """判断是否被抢"""
-    # 如何判断是否被抢？如果对方价格比我们劣1跳，是否还认为是被抢？有可能价格比我们劣，但比我们更快下单，并且在这之后盘口价格变化导致我们没有成交。
-    if direction == "买入":
-        return order_price <= current_price
-    else:
-        return order_price >= current_price
-
-
 def cal_tick2trade(end_time: str, start_time: str):
     """
     计算下单到成交的时间
@@ -558,14 +488,6 @@ def get_parse_data(logfile: str, pickle_file: str = "", if_pickle: bool = False)
     return matched_lines
 
 
-def get_date(logfile=Union[Path, str]):
-    if isinstance(logfile, Path):
-        name = logfile.name
-    else:
-        name = logfile
-    return name.split("_")[-1].split(".")[0]
-
-
 def get_matched_lines(
     logfile: str,
     date: str,
@@ -611,20 +533,8 @@ def parse_one_logfile(
     return results
 
 
-def get_all_files_in_directory(directory: str) -> list[Path]:
-    """
-    获取指定目录下的所有文件。directory: 是基于根目录的相对路径，且需要是文件夹
-    """
-    path = ROOT / directory
-    if not path.exists() or not path.is_dir():
-        print(f"目录 {directory} 不存在或不是一个目录")
-        return []
-    all_files = list(path.rglob("*"))  # rglob('*') 会递归查找所有文件
-    return all_files
-
-
 def main():
-    for file in get_all_files_in_directory("vola"):
+    for file in search_all_file("vola"):
         if file.is_file():
             logger.info(f"开始解析{file.name}")
             parse_one_logfile(file, if_pickle=True)
