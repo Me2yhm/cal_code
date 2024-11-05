@@ -1,31 +1,63 @@
+import os
+import pickle
+import sys
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime
 from functools import partial
-import pickle
-from sys import stdout
-import sys
-from typing import Literal, Union
 from pathlib import Path
+from typing import Literal, Union
 
-from loguru import logger
 import numpy as np
 import pandas as pd
+import polars as pl
+from loguru import logger
+from pymongo import MongoClient
 
-
+COLLECTION = MongoClient(os.getenv("MONGODB_URL")).Quote.Tick2Trade
+ROOT = Path(__file__).parent
 MAX_SIZE = 500
-COLUMNS = ["date", "investor_id", "order_sys_id", "tick2trade", "delay", "status"]
+COLUMNS = [
+    "date",
+    "investor_id",
+    "order_sys_id",
+    "tick2trade",
+    "tick2execute",
+    "execute2send",
+    "send2success",
+    "status",
+]
+COLUMN_TYPES_PD = list(
+    zip(
+        COLUMNS,
+        ["<U10", "<U10", "<U10", np.int64, np.int64, np.int64, np.int64, "<U20"],
+    )
+)
+COLUMN_TYPES_PL = list(
+    zip(
+        COLUMNS,
+        [
+            pl.String,
+            pl.String,
+            pl.String,
+            pl.Int64,
+            pl.Int64,
+            pl.Int64,
+            pl.Int64,
+            pl.String,
+        ],
+    )
+)
 logger.remove()
 logger.add(sys.stdout, level="ERROR")
 logger.add("./logs/tick2trade.log", level="INFO", rotation="1MB", retention="1 days")
 
 
 class OrderStatus:
-    SUCCESS = 0
-    FAILED_FOR_SNAP = 1
-    FAILED_FOR_COMPLETION = 2
-    DENIED = 3
-    UKNOWN = 4
+    SUCCESS = "SUCCESS"
+    FAILED_FOR_SNAP = "FAILED_FOR_SNAP"
+    FAILED_FOR_COMPLETION = "FAILED_FOR_COMPLETION"
+    DENIED = "DENIED"
+    UKNOWN = "UNKNOWN"
 
 
 class LogParser:
@@ -33,7 +65,11 @@ class LogParser:
         # 结果
         self.start_time = ""
         self.end_time = ""
+        self.execute_time = ""
+        self.execute_failed_time = ""
         self.tick_2_trade = 0
+        self.tick_2_execute = 0
+        self.execute_2_send = 0
         self.order_sys_id = ""
         self.delay = ""
         self.status = OrderStatus.UKNOWN
@@ -51,6 +87,7 @@ class LogParser:
         self.ask_price = 0.0
         self.bid_volume = 0
         self.ask_volume = 0
+        self.execute_2_fail = 0
         self.has_order = False
 
     def parse_signal(self, line: str):
@@ -63,6 +100,11 @@ class LogParser:
         target_future = data[4]
         self.start_time = start_time
         self.target_future = target_future
+
+    def parse_start_execute(self, line: str):
+        """解析开始执行行"""
+        self.execute_time = line.split()[0]
+        self.tick_2_execute = cal_tick2trade(self.execute_time, self.start_time)
 
     def parse_order_send(self, line: str):
         """
@@ -86,6 +128,7 @@ class LogParser:
         self.local_order_id = local_order_id
         self.instruction = insturction
         self.tick_2_trade = cal_tick2trade(end_time, self.start_time)
+        self.execute_2_send = cal_tick2trade(end_time, self.execute_time)
 
     def parse_order_filled(self, line: str):
         """
@@ -95,7 +138,7 @@ class LogParser:
         data = line.split()
         delay = data[-1]
         local_order_id = data[-3].split(":")[-1]
-        self.delay = delay.strip("ns")
+        self.delay = int(delay.strip("ns"))
         self.local_order_id = local_order_id
 
     def parse_order_response(
@@ -139,8 +182,10 @@ class LogParser:
         解析执行失败行
         """
         data = line.split()
-        local_order_id, order_sys_id = data[-2].split("/")
-        return local_order_id, order_sys_id
+        self.execute_failed_time = data[0]
+        self.execute_2_fail = cal_tick2trade(
+            self.execute_failed_time, self.execute_time
+        )
 
     def parse_success_return(self, line: str):
         """
@@ -174,7 +219,7 @@ class ConditionSet:
         #     return False
         if "开始执行" in line:
             self.current_conditon = self.is_order_send
-            self.parse_func = self.skip
+            self.parse_func = self.parser.parse_start_execute
             return True
         elif (
             "不允许开仓" in line
@@ -185,7 +230,7 @@ class ConditionSet:
         ):
             logger.info(f"委托被拒绝: {line}")
             self.current_conditon = self.stop
-            self.parse_func = self.skip
+            self.parse_func = self.parser.parse_execute_failed
             self.parser.status = OrderStatus.DENIED
         else:
             return False
@@ -349,7 +394,14 @@ def parse_log(lines: list[str]):
             break
     if parser.status == OrderStatus.UKNOWN and parser.has_order:
         parser.status = check_failed_status(parser)
-    return parser.order_sys_id, parser.tick_2_trade, parser.delay, parser.status
+    return (
+        parser.order_sys_id,
+        parser.tick_2_trade,
+        parser.tick_2_execute,
+        parser.execute_2_send,
+        parser.delay,
+        parser.status,
+    )
 
 
 def check_failed_status(parser: LogParser):
@@ -433,7 +485,7 @@ def cal_tick2trade(end_time: str, start_time: str):
 
 
 def multi_parse(log_lines: dict[int, list[str]], date: str, investor_id: str):
-    results = np.zeros((500, len(COLUMNS)), dtype=np.int64)
+    results = np.zeros((500, len(COLUMNS)), dtype="<U10")
     results[:, 0] = date
     results[:, 1] = investor_id
     futures = []
@@ -444,7 +496,7 @@ def multi_parse(log_lines: dict[int, list[str]], date: str, investor_id: str):
         for future in as_completed(futures):
             try:
                 if result := future.result():
-                    if result[-1] != 3:
+                    if result[-1] != OrderStatus.DENIED:
                         results[row_ind, 2:] = result
                         row_ind += 1
             except Exception as e:
@@ -454,21 +506,32 @@ def multi_parse(log_lines: dict[int, list[str]], date: str, investor_id: str):
     return df
 
 
-def single_parse(log_lines: dict[int, list[str]], date: str, investor_id: str):
-    results = np.zeros((500, len(COLUMNS)), dtype=np.int64)
+def single_parse(
+    log_lines: dict[int, list[str]],
+    date: str,
+    investor_id: str,
+    orient: Literal["row", "column"],
+):
+    results = np.zeros((500, len(COLUMNS)), dtype="<U20")
     results[:, 0] = date
     results[:, 1] = investor_id
     row_ind = 0
     for index, lines in log_lines.items():
         try:
             result = parse_log(lines)
-            if result[-1] != 3:
+            if result[-1] != OrderStatus.DENIED:
                 results[row_ind, 2:] = result
                 row_ind += 1
         except Exception as e:
             logger.error(f"解析失败: {e}: {result}")
             continue
-    df = pd.DataFrame(results[:row_ind], columns=COLUMNS)
+    match orient:
+        case "row":
+            df = pd.DataFrame(results[:row_ind], columns=COLUMNS).astype(
+                dict(COLUMN_TYPES_PD)
+            )
+        case "column":
+            df = pl.DataFrame(results[:row_ind], schema=COLUMN_TYPES_PL)
     return df
 
 
@@ -503,31 +566,70 @@ def get_date(logfile=Union[Path, str]):
     return name.split("_")[-1].split(".")[0]
 
 
-def parse_one_logfile(
-    logfile: Union[Path, str], investor_id: str = "123456", if_pickle: bool = False
+def get_matched_lines(
+    logfile: str,
+    date: str,
+    investor_id: str,
+    if_pickle: bool = False,
 ):
-    date = get_date(logfile)
-    investor_id = investor_id
-    pickle_file = f"./cache/{date}_{investor_id}.pkl"
-    if Path(pickle_file).exists():
+    pickle_file = ROOT / f"./cache/{date}_{investor_id}.pkl"
+    if pickle_file.exists():
         with open(pickle_file, "rb") as f:
             matched_lines = pickle.load(f)
     else:
         matched_lines = get_parse_data(logfile, pickle_file, if_pickle)
 
-    results = single_parse(matched_lines, date, investor_id)
-    print(results)
+    return matched_lines
+
+
+def parse_one_logfile(
+    logfile: Union[Path, str],
+    investor_id: str = "123456",
+    if_pickle: bool = False,
+    to_mongo: bool = False,
+    orient: Literal["row", "column"] = "column",
+):
+    date = get_date(logfile)
+    matched_lines = get_matched_lines(logfile, date, investor_id, if_pickle)
+    results = single_parse(matched_lines, date, investor_id, orient)
+    if to_mongo:
+        id = f"{date}_{investor_id}"
+        match orient:
+            case "row":
+                results_dic = results[COLUMNS[2:]].to_dict(orient="records")
+                record = {"_id": id, "data": results_dic}
+            case "column":
+                results_dic = results[COLUMNS[2:]].to_dict(as_series=False)
+                record = {"_id": id, **results_dic}
+            case _:
+                raise ValueError(f"orient must be row or column, but got {orient}")
+        COLLECTION.update_one(
+            {"_id": id},
+            {"$set": record},
+            upsert=True,
+        )
+    return results
+
+
+def get_all_files_in_directory(directory: str) -> list[Path]:
+    """
+    获取指定目录下的所有文件。directory: 是基于根目录的相对路径，且需要是文件夹
+    """
+    path = ROOT / directory
+    if not path.exists() or not path.is_dir():
+        print(f"目录 {directory} 不存在或不是一个目录")
+        return []
+    all_files = list(path.rglob("*"))  # rglob('*') 会递归查找所有文件
+    return all_files
 
 
 def main():
-    directory = "./vola"
-    path = Path(directory)
-    for file in path.rglob("*"):
+    for file in get_all_files_in_directory("vola"):
         if file.is_file():
             logger.info(f"开始解析{file.name}")
             parse_one_logfile(file, if_pickle=True)
 
 
 if __name__ == "__main__":
-    logfile = "./vola/arb2_20241030.log"
-    parse_one_logfile(logfile)
+    logfile = "./vola/arb2_20241028.log"
+    print(parse_one_logfile(logfile, to_mongo=True, orient="row"))

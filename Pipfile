@@ -11,6 +11,7 @@ loguru = "*"
 msgpack = "*"
 redis = "*"
 matplotlib = "*"
+pymongo = "*"
 
 [dev-packages]
 
