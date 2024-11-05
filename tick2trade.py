@@ -447,6 +447,7 @@ def single_parse(
     results[:, 1] = investor_id
     row_ind = 0
     for index, lines in log_lines.items():
+        result = None
         try:
             result = parse_log(lines)
             if result[-1] != OrderStatus.DENIED:
@@ -536,10 +537,13 @@ def parse_one_logfile(
 def main():
     for file in search_all_file("vola"):
         if file.is_file():
-            logger.info(f"开始解析{file.name}")
-            parse_one_logfile(file, if_pickle=True)
+            try:
+                logger.info(f"开始解析{file.name}")
+                parse_one_logfile(file, to_mongo=True, orient="row")
+            except Exception as e:
+                logger.error(f"解析失败: {e} {file.name}")
+                continue
 
 
 if __name__ == "__main__":
-    logfile = "./vola/arb2_20241028.log"
-    print(parse_one_logfile(logfile, to_mongo=True, orient="row"))
+    main()
