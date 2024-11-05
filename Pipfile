@@ -12,6 +12,7 @@ msgpack = "*"
 redis = "*"
 matplotlib = "*"
 pymongo = "*"
+watchdog = "*"
 
 [dev-packages]
 
