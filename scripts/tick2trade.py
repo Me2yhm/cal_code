@@ -521,7 +521,7 @@ def parse_one_logfile(
     date = get_date(logfile)
     logger.remove()
     logger.add(sys.stdout, level="SUCCESS")
-    logger.add(f"logs/{date}_{investor_id}.log", level="INFO")
+    logger.add(ROOT / f"logs/{date}_{investor_id}.log", level="INFO")
     matched_lines = get_matched_lines(logfile, date, investor_id, if_pickle)
     results = single_parse(matched_lines, date, investor_id, orient)
     if to_mongo:
@@ -538,6 +538,8 @@ def run(
     if isinstance(directory, str):
         directory = Path(directory)
     investor_id = directory.name
+    success_path = ROOT / "success_files.pickle"
+    failed_path = ROOT / "failed_files.pickle"
     success_files, failed_files = get_record_lists()
     for file in search_all_file(directory):
         if file.is_file():
@@ -565,9 +567,9 @@ def run(
         f"解析失败{len(failed_files)}个日志文件，解析失败的文件被保存在failed_files.pkl中"
     )
     logger.error(f"解析失败的文件: {failed_files}")
-    with open("success_files.pkl", "wb") as f:
+    with open(success_path, "wb") as f:
         pickle.dump(success_files, f)
-    with open("failed_files.pkl", "wb") as f:
+    with open(failed_path, "wb") as f:
         pickle.dump(failed_files, f)
 
 

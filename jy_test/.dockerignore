@@ -4,5 +4,6 @@
 *.log
 *.csv
 /logs
+/cache
 /__pycache__
 *id_rsa*

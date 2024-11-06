@@ -6,7 +6,7 @@ import polars as pl
 from pymongo import MongoClient
 
 COLLECTION = MongoClient(os.getenv("MONGODB_URL")).Quote.Tick2Trade
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent
 MAX_SIZE = 500
 COLUMNS = [
     "date",

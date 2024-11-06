@@ -3,6 +3,6 @@
 set -ex
 docker build -t cal-code .
 docker rm -f cal-code; docker run -d --env-file .env \
-    -v /home/cal_code:/cal_code \
-    -v /opt/logs/vola:/cal_code/vola \
+    -v /home/cal_code/scripts:/app/cal_code \
+    -v /opt/logs/vola:/app/vola \
     --name=cal-code cal-code
