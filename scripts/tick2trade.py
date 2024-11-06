@@ -419,7 +419,7 @@ def cal_tick2trade(end_time: str, start_time: str):
 
 
 def multi_parse(log_lines: dict[int, list[str]], date: str, investor_id: str):
-    results = np.zeros((500, len(COLUMNS)), dtype="<U10")
+    results = np.zeros((2000, len(COLUMNS)), dtype="<U10")
     results[:, 0] = date
     results[:, 1] = investor_id
     futures = []
@@ -450,6 +450,7 @@ def single_parse(
     results[:, 0] = date
     results[:, 1] = investor_id
     row_ind = 0
+    all_success = True
     for index, lines in log_lines.items():
         result = None
         try:
@@ -459,6 +460,7 @@ def single_parse(
                 row_ind += 1
         except Exception as e:
             logger.error(f"{date}_{investor_id}解析失败: {e}: {result}")
+            all_success = False
             continue
     match orient:
         case "row":
@@ -467,7 +469,7 @@ def single_parse(
             )
         case "column":
             df = pl.DataFrame(results[:row_ind], schema=COLUMN_TYPES_PL)
-    return df
+    return df, all_success
 
 
 def get_parse_data(logfile: str, pickle_file: str = "", if_pickle: bool = False):
@@ -523,10 +525,10 @@ def parse_one_logfile(
     logger.add(sys.stdout, level="SUCCESS")
     logger.add(ROOT / f"logs/{investor_id}/{date}_{investor_id}.log", level="INFO")
     matched_lines = get_matched_lines(logfile, date, investor_id, if_pickle)
-    results = single_parse(matched_lines, date, investor_id, orient)
+    results, all_success = single_parse(matched_lines, date, investor_id, orient)
     if to_mongo:
         save_to_mongo(date, investor_id, results, orient)
-    return results
+    return results, all_success
 
 
 def run(
@@ -548,15 +550,16 @@ def run(
                 if file in success_files:
                     logger.warning(f"{file.name}已解析过")
                     continue
-                parse_one_logfile(
+                _, all_success = parse_one_logfile(
                     file,
                     investor_id=investor_id,
                     if_pickle=if_pickle,
                     to_mongo=to_mongo,
                     orient=orient,
                 )
-                success_files.append(file)
-                logger.success(f"{file.name}解析成功")
+                if all_success:
+                    success_files.append(file)
+                    logger.success(f"{file.name}解析成功")
             except Exception as e:
                 logger.error(f"解析失败: {e} {file.name}")
                 failed_files.append(file)
@@ -611,4 +614,4 @@ def multi_main(
 
 
 if __name__ == "__main__":
-    main("vola", if_pickle=True, to_mongo=True, orient="row")
+    multi_main("vola", if_pickle=True, to_mongo=True, orient="row")
