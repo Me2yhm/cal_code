@@ -1,5 +1,5 @@
 # 选择一个基础镜像，这里我们使用官方的 Python 3.11 镜像
-FROM python:3.11-slim
+FROM registry.cn-shanghai.aliyuncs.com/jqy-common/python311-tmux:latest
 
 # 设置工作目录为 /cal_code
 WORKDIR /cal_code
