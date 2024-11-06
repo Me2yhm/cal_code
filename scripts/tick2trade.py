@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 from loguru import logger
+from pymongo import MongoClient
 
 from utils import (
     get_accessed_volume,
@@ -515,6 +516,7 @@ def get_matched_lines(
 
 def parse_one_logfile(
     logfile: Union[Path, str],
+    collection: MongoClient,
     investor_id: str = "123456",
     if_pickle: bool = False,
     to_mongo: bool = False,
@@ -527,7 +529,7 @@ def parse_one_logfile(
     matched_lines = get_matched_lines(logfile, date, investor_id, if_pickle)
     results, all_success = single_parse(matched_lines, date, investor_id, orient)
     if to_mongo:
-        save_to_mongo(date, investor_id, results, orient)
+        save_to_mongo(date, investor_id, results, collection, orient)
     return results, all_success
 
 
@@ -543,6 +545,7 @@ def run(
     success_path = ROOT / f"/cache/{investor_id}/{investor_id}_success_files.pkl"
     failed_path = ROOT / f"/cache/{investor_id}/{investor_id}failed_files.pkl"
     success_files, failed_files = get_record_lists(success_path, failed_path)
+    collection = MongoClient(os.getenv("MONGODB_URL")).Quote.Tick2Trade
     for file in search_all_file(directory):
         if file.is_file():
             try:
@@ -556,12 +559,13 @@ def run(
                     if_pickle=if_pickle,
                     to_mongo=to_mongo,
                     orient=orient,
+                    collection=collection,
                 )
                 if all_success:
                     success_files.append(file)
-                    logger.success(f"{file.name}解析成功")
+                    logger.success(f"{investor_id}_{file.name}解析成功")
             except Exception as e:
-                logger.error(f"解析失败: {e} {file.name}")
+                logger.error(f"解析失败: {e} {investor_id}_{file.name}")
                 failed_files.append(file)
                 continue
     logger.success(

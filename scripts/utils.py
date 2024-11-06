@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Union
 
 from loguru import logger
-from pymongo import UpdateOne
+from pymongo import MongoClient, UpdateOne
 
 from const import COLLECTION, COLUMNS
 
@@ -82,16 +82,16 @@ def get_accessed_volume(
             raise ValueError(f"direction must be 买入 or 卖出, but got {direction}")
 
 
-def save_to_mongo(date, investor_id, results, orient="row"):
+def save_to_mongo(date, investor_id, results, collection: MongoClient, orient="row"):
     id = f"{date}_{investor_id}"
     match orient:
         case "row":
             results_dic = results[COLUMNS[2:]].to_dict(orient="records")
-            save_as_row(id, results_dic)
+            save_as_row(id, results_dic, collection)
         case "column":
             results_dic = results[COLUMNS[2:]].to_dict(as_series=False)
             record = {"_id": id, **results_dic}
-            COLLECTION.update_many(
+            collection.update_many(
                 {"_id": id},
                 {"$set": record},
                 upsert=True,
@@ -100,7 +100,7 @@ def save_to_mongo(date, investor_id, results, orient="row"):
             raise ValueError(f"orient must be row or column, but got {orient}")
 
 
-def save_as_row(id: str, results_dic: list[dict]):
+def save_as_row(id: str, results_dic: list[dict], collection: MongoClient):
     operations = []
     for row in results_dic:
         _id = f"{id}_{row['execute_time']}"
@@ -114,7 +114,7 @@ def save_as_row(id: str, results_dic: list[dict]):
 
     # 执行批量操作
     if operations:
-        result = COLLECTION.bulk_write(operations)
+        result = collection.bulk_write(operations)
         logger.info(
             f"Inserted: {result.upserted_count} records. Matched: {result.matched_count} records."
         )
