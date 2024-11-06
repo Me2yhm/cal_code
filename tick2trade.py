@@ -504,6 +504,8 @@ def get_matched_lines(
         with open(pickle_file, "rb") as f:
             matched_lines = pickle.load(f)
     else:
+        if not pickle_file.parent.exists():
+            pickle_file.parent.mkdir(parents=True, exist_ok=True)
         matched_lines = get_parse_data(logfile, pickle_file, if_pickle)
 
     return matched_lines
