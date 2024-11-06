@@ -1,0 +1,8 @@
+/web/node_modules
+*draft*
+/images
+*.log
+*.csv
+/logs
+/__pycache__
+*id_rsa*

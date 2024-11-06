@@ -1,0 +1,9 @@
+-i https://pypi.mirrors.ustc.edu.cn/simple/
+loguru==0.7.2
+numpy>=1.23
+matplotlib==3.9.2
+pandas==2.2.3
+polars==1.12.0
+pymongo==4.10.1
+redis==5.2.0
+watchdog==6.0.0

@@ -569,11 +569,18 @@ def run(
         pickle.dump(failed_files, f)
 
 
-def main(logs_dir: str):
+def main(
+    logs_dir: str,
+    if_pickle=True,
+    to_mongo=True,
+    orient: Literal["row", "column"] = "row",
+):
     logs_path = Path(logs_dir)
     for investor_id in logs_path.iterdir():
         if investor_id.is_dir():
-            print(f"开始解析{investor_id.name}")
+            logger.info(f"开始解析{investor_id.name}")
+            run(investor_id, if_pickle, to_mongo, orient)
+            logger.success(f"{investor_id.name}解析完成")
 
 
 if __name__ == "__main__":
