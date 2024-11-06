@@ -20,7 +20,7 @@ def search_all_file(directory: str) -> list[Path]:
     """
     获取指定目录下的所有文件。directory: 是基于根目录的相对路径，且需要是文件夹
     """
-    path = ROOT / directory
+    path = Path(directory)
     if not path.exists() or not path.is_dir():
         print(f"目录 {directory} 不存在或不是一个目录")
         return []

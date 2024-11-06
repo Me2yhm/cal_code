@@ -25,7 +25,7 @@ from const import (
 
 
 logger.remove()
-logger.add(sys.stdout, level="ERROR")
+logger.add(sys.stdout, level="SUCCESS")
 logger.add("./logs/tick2trade.log", level="INFO", rotation="1MB", retention="1 days")
 
 
@@ -454,7 +454,7 @@ def single_parse(
                 results[row_ind, 2:] = result
                 row_ind += 1
         except Exception as e:
-            logger.error(f"解析失败: {e}: {result}")
+            logger.error(f"{date}_{investor_id}解析失败: {e}: {result}")
             continue
     match orient:
         case "row":
@@ -535,14 +535,39 @@ def parse_one_logfile(
 
 
 def main():
-    for file in search_all_file("vola"):
+    success_path = Path("success_files.pickle")
+    failed_path = Path("failed_files.pickle")
+    if success_path.exists():
+        with open(success_path, "rb") as f:
+            success_files = pickle.load(f)
+    else:
+        success_files = []
+    if failed_path.exists():
+        with open(failed_path, "rb") as f:
+            failed_files = pickle.load(f)
+    else:
+        failed_files = []
+    for file in search_all_file("/opt/logs/vola"):
         if file.is_file():
             try:
                 logger.info(f"开始解析{file.name}")
-                parse_one_logfile(file, to_mongo=True, orient="row")
+                if file in success_files:
+                    continue
+                parse_one_logfile(file, to_mongo=False, orient="row")
+                success_files.append(file)
             except Exception as e:
                 logger.error(f"解析失败: {e} {file.name}")
+                failed_files.append(file)
                 continue
+    logger.success(
+        f"成功解析{len(success_files)}个日志文件，解析过的文件被保存在success_files.pickle中"
+    )
+    logger.error(
+        f"解析失败{len(failed_files)}个日志文件，解析失败的文件被保存在failed_files.pickle中"
+    )
+    logger.error(f"解析失败的文件: {failed_files}")
+    with open("success_files.pickle", "wb") as f:
+        pickle.dump(success_files, f)
 
 
 if __name__ == "__main__":
