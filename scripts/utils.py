@@ -120,18 +120,18 @@ def save_as_row(id: str, results_dic: list[dict]):
         )
 
 
-def get_record_lists():
-    success_path = ROOT / "success_files.pickle"
-    failed_path = ROOT / "failed_files.pickle"
+def get_record_lists(success_path: Path, failed_path: Path):
     if success_path.exists():
         with open(success_path, "rb") as f:
             success_files = pickle.load(f)
     else:
         success_files = []
     if failed_path.exists():
+        failed_path.parent.mkdir(parents=True, exist_ok=True)
         with open(failed_path, "rb") as f:
             failed_files = pickle.load(f)
     else:
+        failed_path.parent.mkdir(parents=True, exist_ok=True)
         failed_files = []
     return success_files, failed_files
 

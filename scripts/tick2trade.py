@@ -499,7 +499,7 @@ def get_matched_lines(
     investor_id: str,
     if_pickle: bool = False,
 ):
-    pickle_file = ROOT / f"./cache/{date}_{investor_id}.pkl"
+    pickle_file = ROOT / f"./cache/{investor_id}/{date}_{investor_id}.pkl"
     if pickle_file.exists():
         with open(pickle_file, "rb") as f:
             matched_lines = pickle.load(f)
@@ -521,7 +521,7 @@ def parse_one_logfile(
     date = get_date(logfile)
     logger.remove()
     logger.add(sys.stdout, level="SUCCESS")
-    logger.add(ROOT / f"logs/{date}_{investor_id}.log", level="INFO")
+    logger.add(ROOT / f"logs/{investor_id}/{date}_{investor_id}.log", level="INFO")
     matched_lines = get_matched_lines(logfile, date, investor_id, if_pickle)
     results = single_parse(matched_lines, date, investor_id, orient)
     if to_mongo:
@@ -538,14 +538,15 @@ def run(
     if isinstance(directory, str):
         directory = Path(directory)
     investor_id = directory.name
-    success_path = ROOT / "success_files.pickle"
-    failed_path = ROOT / "failed_files.pickle"
-    success_files, failed_files = get_record_lists()
+    success_path = ROOT / f"/cache/{investor_id}/{investor_id}_success_files.pkl"
+    failed_path = ROOT / f"/cache/{investor_id}/{investor_id}failed_files.pkl"
+    success_files, failed_files = get_record_lists(success_path, failed_path)
     for file in search_all_file(directory):
         if file.is_file():
             try:
                 logger.info(f"开始解析{file.name}")
                 if file in success_files:
+                    logger.warning(f"{file.name}已解析过")
                     continue
                 parse_one_logfile(
                     file,
@@ -579,7 +580,7 @@ def main(
     to_mongo=True,
     orient: Literal["row", "column"] = "row",
 ):
-    logs_path = Path(logs_dir)
+    logs_path = ROOT / logs_dir
     for investor_id in logs_path.iterdir():
         if investor_id.is_dir():
             logger.info(f"开始解析{investor_id.name}")
@@ -587,5 +588,27 @@ def main(
             logger.success(f"{investor_id.name}解析完成")
 
 
+def multi_main(
+    logs_dir: str,
+    if_pickle=True,
+    to_mongo=True,
+    orient: Literal["row", "column"] = "row",
+):
+    logs_path = ROOT / logs_dir
+    futures = {}
+    with ProcessPoolExecutor() as executor:
+        for investor_id in logs_path.iterdir():
+            if investor_id.is_dir():
+                logger.info(f"开始解析{investor_id.name}")
+                future = executor.submit(run, investor_id, if_pickle, to_mongo, orient)
+                futures[future] = investor_id.name
+        for future in as_completed(futures):
+            try:
+                future.result()
+                logger.success(f"{investor_id}解析完成")
+            except Exception as e:
+                logger.error(f"{investor_id}解析失败: {e}")
+
+
 if __name__ == "__main__":
-    run("vola", if_pickle=True, to_mongo=True, orient="row")
+    main("vola", if_pickle=True, to_mongo=True, orient="row")
