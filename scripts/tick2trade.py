@@ -447,7 +447,7 @@ def single_parse(
     investor_id: str,
     orient: Literal["row", "column"],
 ):
-    results = np.zeros((500, len(COLUMNS)), dtype="<U20")
+    results = np.zeros((2000, len(COLUMNS)), dtype="<U20")
     results[:, 0] = date
     results[:, 1] = investor_id
     row_ind = 0
