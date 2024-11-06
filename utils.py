@@ -1,7 +1,12 @@
+import pickle
 import time
 from pathlib import Path
 from typing import Union
+
 from loguru import logger
+from pymongo import UpdateOne
+
+from const import COLLECTION, COLUMNS
 
 ROOT = Path(__file__).parent
 
@@ -16,11 +21,13 @@ def timeit(func):
     return wrapper
 
 
-def search_all_file(directory: str) -> list[Path]:
+def search_all_file(directory: Union[str, Path]) -> list[Path]:
     """
-    获取指定目录下的所有文件。directory: 是基于根目录的相对路径，且需要是文件夹
+    获取指定目录下的所有文件。directory: 是绝对路径，且需要是文件夹
     """
-    path = Path(directory)
+    if isinstance(directory, str):
+        path = Path(directory)
+    path = directory
     if not path.exists() or not path.is_dir():
         print(f"目录 {directory} 不存在或不是一个目录")
         return []
@@ -73,3 +80,61 @@ def get_accessed_volume(
                 return last_volume + bid1_volume
         case _:
             raise ValueError(f"direction must be 买入 or 卖出, but got {direction}")
+
+
+def save_to_mongo(date, investor_id, results, orient="row"):
+    id = f"{date}_{investor_id}"
+    match orient:
+        case "row":
+            results_dic = results[COLUMNS[2:]].to_dict(orient="records")
+            save_as_row(id, results_dic)
+        case "column":
+            results_dic = results[COLUMNS[2:]].to_dict(as_series=False)
+            record = {"_id": id, **results_dic}
+            COLLECTION.update_many(
+                {"_id": id},
+                {"$set": record},
+                upsert=True,
+            )
+        case _:
+            raise ValueError(f"orient must be row or column, but got {orient}")
+
+
+def save_as_row(id: str, results_dic: list[dict]):
+    operations = []
+    for row in results_dic:
+        _id = f"{id}_{row['execute_time']}"
+        operations.append(
+            UpdateOne(
+                {"_id": _id},  # 查找条件，确保唯一性
+                {"$setOnInsert": row},  # 如果不存在则插入
+                upsert=True,
+            )
+        )
+
+    # 执行批量操作
+    if operations:
+        result = COLLECTION.bulk_write(operations)
+        logger.info(
+            f"Inserted: {result.upserted_count} records. Matched: {result.matched_count} records."
+        )
+
+
+def get_record_lists():
+    success_path = Path("success_files.pickle")
+    failed_path = Path("failed_files.pickle")
+    if success_path.exists():
+        with open(success_path, "rb") as f:
+            success_files = pickle.load(f)
+    else:
+        success_files = []
+    if failed_path.exists():
+        with open(failed_path, "rb") as f:
+            failed_files = pickle.load(f)
+    else:
+        failed_files = []
+    return success_files, failed_files
+
+
+if __name__ == "__main__":
+    COLLECTION.delete_many({})

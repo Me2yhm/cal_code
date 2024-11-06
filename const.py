@@ -11,6 +11,7 @@ MAX_SIZE = 500
 COLUMNS = [
     "date",
     "investor_id",
+    "execute_time",
     "order_sys_id",
     "tick2trade",
     "tick2execute",
@@ -21,13 +22,24 @@ COLUMNS = [
 COLUMN_TYPES_PD = list(
     zip(
         COLUMNS,
-        ["<U10", "<U10", "<U10", np.int64, np.int64, np.int64, np.int64, "<U20"],
+        [
+            "<U10",
+            "<U10",
+            "<U10",
+            "<U10",
+            np.int64,
+            np.int64,
+            np.int64,
+            np.int64,
+            "<U20",
+        ],
     )
 )
 COLUMN_TYPES_PL = list(
     zip(
         COLUMNS,
         [
+            pl.String,
             pl.String,
             pl.String,
             pl.String,

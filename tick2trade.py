@@ -12,21 +12,24 @@ import pandas as pd
 import polars as pl
 from loguru import logger
 
-from utils import get_accessed_volume, get_date, search_all_file
+from utils import (
+    get_accessed_volume,
+    get_date,
+    get_record_lists,
+    save_to_mongo,
+    search_all_file,
+)
 from const import (
     COLUMNS,
     COLUMN_TYPES_PD,
     COLUMN_TYPES_PL,
-    COLLECTION,
     MAX_SIZE,
     ROOT,
     OrderStatus,
 )
 
-
 logger.remove()
 logger.add(sys.stdout, level="SUCCESS")
-logger.add("./logs/tick2trade.log", level="INFO", rotation="1MB", retention="1 days")
 
 
 class LogParser:
@@ -364,6 +367,7 @@ def parse_log(lines: list[str]):
     if parser.status == OrderStatus.UKNOWN and parser.has_order:
         parser.status = check_failed_status(parser)
     return (
+        parser.execute_time[:-6],
         parser.order_sys_id,
         parser.tick_2_trade,
         parser.tick_2_execute,
@@ -513,62 +517,64 @@ def parse_one_logfile(
     orient: Literal["row", "column"] = "column",
 ):
     date = get_date(logfile)
+    logger.remove()
+    logger.add(sys.stdout, level="SUCCESS")
+    logger.add(f"logs/{date}_{investor_id}.log", level="INFO")
     matched_lines = get_matched_lines(logfile, date, investor_id, if_pickle)
     results = single_parse(matched_lines, date, investor_id, orient)
     if to_mongo:
-        id = f"{date}_{investor_id}"
-        match orient:
-            case "row":
-                results_dic = results[COLUMNS[2:]].to_dict(orient="records")
-                record = {"_id": id, "data": results_dic}
-            case "column":
-                results_dic = results[COLUMNS[2:]].to_dict(as_series=False)
-                record = {"_id": id, **results_dic}
-            case _:
-                raise ValueError(f"orient must be row or column, but got {orient}")
-        COLLECTION.update_one(
-            {"_id": id},
-            {"$set": record},
-            upsert=True,
-        )
+        save_to_mongo(date, investor_id, results, orient)
     return results
 
 
-def main():
-    success_path = Path("success_files.pickle")
-    failed_path = Path("failed_files.pickle")
-    if success_path.exists():
-        with open(success_path, "rb") as f:
-            success_files = pickle.load(f)
-    else:
-        success_files = []
-    if failed_path.exists():
-        with open(failed_path, "rb") as f:
-            failed_files = pickle.load(f)
-    else:
-        failed_files = []
-    for file in search_all_file("/opt/logs/vola"):
+def run(
+    directory: Union[str, Path],
+    if_pickle: bool = False,
+    to_mongo: bool = False,
+    orient: Literal["row", "column"] = "row",
+):
+    if isinstance(directory, str):
+        directory = Path(directory)
+    investor_id = directory.name
+    success_files, failed_files = get_record_lists()
+    for file in search_all_file(directory):
         if file.is_file():
             try:
                 logger.info(f"开始解析{file.name}")
                 if file in success_files:
                     continue
-                parse_one_logfile(file, to_mongo=False, orient="row")
+                parse_one_logfile(
+                    file,
+                    investor_id=investor_id,
+                    if_pickle=if_pickle,
+                    to_mongo=to_mongo,
+                    orient=orient,
+                )
                 success_files.append(file)
+                logger.success(f"{file.name}解析成功")
             except Exception as e:
                 logger.error(f"解析失败: {e} {file.name}")
                 failed_files.append(file)
                 continue
     logger.success(
-        f"成功解析{len(success_files)}个日志文件，解析过的文件被保存在success_files.pickle中"
+        f"成功解析{len(success_files)}个日志文件，解析过的文件被保存在success_files.pkl中"
     )
     logger.error(
-        f"解析失败{len(failed_files)}个日志文件，解析失败的文件被保存在failed_files.pickle中"
+        f"解析失败{len(failed_files)}个日志文件，解析失败的文件被保存在failed_files.pkl中"
     )
     logger.error(f"解析失败的文件: {failed_files}")
-    with open("success_files.pickle", "wb") as f:
+    with open("success_files.pkl", "wb") as f:
         pickle.dump(success_files, f)
+    with open("failed_files.pkl", "wb") as f:
+        pickle.dump(failed_files, f)
+
+
+def main(logs_dir: str):
+    logs_path = Path(logs_dir)
+    for investor_id in logs_path.iterdir():
+        if investor_id.is_dir():
+            print(f"开始解析{investor_id.name}")
 
 
 if __name__ == "__main__":
-    main()
+    run("vola", if_pickle=True, to_mongo=True, orient="row")
