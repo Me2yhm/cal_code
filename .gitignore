@@ -7,3 +7,4 @@
 /cache
 /logs
 /__pycache__
+*id_rsa*
