@@ -206,7 +206,7 @@ class LogParser:
         self.execute_2_order = cal_tick2trade(
             self.order_start_time, self.execute_time
         )  # 开始执行到委托下单时间
-        self.order_2_send = cal_tick2trade(self.end_time, self.execute_time)
+        self.order_2_send = cal_tick2trade(self.end_time, self.order_start_time)
         # send to send ok is self.delay
 
 
@@ -498,7 +498,10 @@ def cal_tick2trade(end_time: str, start_time: str):
     logger.info(f"end: {end}, start: {start}")
     end_ns = int(end[0][-2:] + end[-1])
     start_ns = int(start[0][-2:] + start[-1])
-    return end_ns - start_ns
+    diff = end_ns - start_ns
+    if diff < 0:
+        diff += 1000000000
+    return diff
 
 
 def single_parse(
@@ -607,7 +610,7 @@ def parse_one_logfile(
     investor_id: str = "123456",
     if_pickle: bool = False,
     to_mongo: bool = False,
-    orient: Literal["row", "column"] = "column",
+    orient: Literal["row", "column"] = "row",
 ):
     date = get_date(logfile)
     logger.remove()
