@@ -39,6 +39,7 @@ class LogParser:
         self.start_time = ""
         self.end_time = ""
         self.execute_time = ""
+        self.snap_time = ""
         self.execute_failed_time = ""
         self.tick_2_trade = 0
         self.tick_2_execute = 0
@@ -52,6 +53,7 @@ class LogParser:
         self.local_order_id = ""
         self.direction = ""
         self.target_future = ""
+        self.failed_reason = ""
         self.order_volume = 0
         self.order_price = 0.0
         self.current_price = 0.0
@@ -114,6 +116,14 @@ class LogParser:
         self.delay = int(delay.strip("ns"))
         self.local_order_id = local_order_id
 
+    def parse_order_failed(self, line: str):
+        """
+        解析下单失败行
+        """
+        logger.info(f"解析下单失败行: {line}")
+        data = line.split()
+        self.failed_reason = data[-1]
+
     def parse_order_response(
         self, line: str, kind: Literal["fast_rsp", "normal"] = "normal"
     ):
@@ -130,7 +140,7 @@ class LogParser:
                 _, order_sys_id = data[-4].split(":")[-1].split("/")
                 self.order_sys_id = order_sys_id
 
-    def parse_quotas(self, line: str):
+    def parse_quotes(self, line: str):
         """
         解析行情行
         """
@@ -142,6 +152,7 @@ class LogParser:
         ask_volume = data[-5]
         current_price = data[-3]
         last_volume = data[-1]
+        snap_time = data[5].split("/")[-1]
 
         self.current_price = float(current_price)
         self.last_volume = int(last_volume)
@@ -149,6 +160,7 @@ class LogParser:
         self.ask_price = float(ask_price)
         self.bid_volume = int(bid_volume)
         self.ask_volume = int(ask_volume)
+        self.snap_time = snap_time
 
     def parse_execute_failed(self, line: str):
         """
@@ -159,6 +171,7 @@ class LogParser:
         self.execute_2_fail = cal_tick2trade(
             self.execute_failed_time, self.execute_time
         )
+        self.failed_reason = data[5]
 
     def parse_success_return(self, line: str):
         """
@@ -174,7 +187,7 @@ class ConditionSet:
 
     def __init__(self, parser: LogParser):
         self.current_conditon = self.is_signal
-        self.quoto = False
+        self.quote = False
         self.parser = parser
         self.parse_func = self.parser.parse_signal
 
@@ -225,12 +238,17 @@ class ConditionSet:
         if "下单成功" in line and local_order_id in line:
             self.current_conditon = self.is_order_response
             self.parse_func = self.parser.parse_order_filled
-            self.quoto = True
+            self.quote = True
+            return True
+        elif "下单失败" in line:
+            self.current_conditon = self.stop
+            self.parser.status = OrderStatus.ORDER_FAILED
+            self.parse_func = self.parser.parse_order_failed
             return True
         else:
             return False
 
-    def is_quota(self, line: str):
+    def is_quote(self, line: str):
         symbol = self.parser.symbol
         if "行情" in line and symbol in line:
             return True
@@ -359,23 +377,25 @@ def parse_log(lines: list[str]):
     for line in lines:
         if conditons.current_conditon(line):
             conditons.parse_func(line)
-        if conditons.quoto:
-            if conditons.is_quota(line):
-                parser.parse_quotas(line)
-                conditons.quoto = False
-        if conditons.current_conditon == conditons.stop:
+        if conditons.quote:
+            if conditons.is_quote(line):
+                parser.parse_quotes(line)
+                conditons.quote = False
+        if conditons.current_conditon == conditons.stop and not conditons.quote:
             break
+    if (
+        not parser.snap_time
+        and parser.status != OrderStatus.DENIED
+        and parser.status != OrderStatus.ORDER_FAILED
+    ):
+        raise ValueError(
+            f"未解析行情，可能解析失败：result: \
+{parser.snap_time,parser.order_sys_id,parser.tick_2_trade,parser.tick_2_execute,parser.execute_2_send,parser.delay,parser.status}, \
+local_order_id: {parser.local_order_id} "
+        )
     if parser.status == OrderStatus.UKNOWN and parser.has_order:
         parser.status = check_failed_status(parser)
-    return (
-        parser.execute_time[:-6],
-        parser.order_sys_id,
-        parser.tick_2_trade,
-        parser.tick_2_execute,
-        parser.execute_2_send,
-        parser.delay,
-        parser.status,
-    )
+    return parser
 
 
 def check_failed_status(parser: LogParser):
@@ -453,12 +473,29 @@ def single_parse(
     row_ind = 0
     all_success = True
     for index, lines in log_lines.items():
+        parser = None
         result = None
         try:
-            result = parse_log(lines)
-            if result[-1] != OrderStatus.DENIED:
+            parser = parse_log(lines)
+            result = (
+                parser.snap_time,
+                parser.order_sys_id,
+                parser.tick_2_trade,
+                parser.tick_2_execute,
+                parser.execute_2_send,
+                parser.delay,
+                parser.status,
+            )
+            if (
+                result[-1] != OrderStatus.DENIED
+                and result[-1] != OrderStatus.ORDER_FAILED
+            ):
                 results[row_ind, 2:] = result
                 row_ind += 1
+            else:
+                logger.info(
+                    f"{date}_{investor_id} 执行失败,原因为: {parser.failed_reason}"
+                )
         except Exception as e:
             logger.error(f"{date}_{investor_id}解析失败: {e}: {result}")
             all_success = False
@@ -561,11 +598,11 @@ def run(
                     orient=orient,
                     collection=collection,
                 )
-                if all_success:
-                    success_files.append(file)
-                    logger.success(f"{investor_id}_{file.name}解析成功")
+                assert all_success, f"{investor_id}/{file.name}未全部解析成功"
+                success_files.append(file)
+                logger.success(f"{investor_id}_{file.name}全部解析成功")
             except Exception as e:
-                logger.error(f"解析失败: {e} {investor_id}_{file.name}")
+                logger.error(f"解析失败:[{e.__class__}] {e} {investor_id}/{file.name}")
                 failed_files.append(file)
                 continue
     logger.success(

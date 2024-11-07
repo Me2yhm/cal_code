@@ -11,7 +11,7 @@ MAX_SIZE = 500
 COLUMNS = [
     "date",
     "investor_id",
-    "execute_time",
+    "snap_time",
     "order_sys_id",
     "tick2trade",
     "tick2execute",
@@ -59,3 +59,4 @@ class OrderStatus:
     FAILED_FOR_COMPLETION = "FAILED_FOR_COMPLETION"
     DENIED = "DENIED"
     UKNOWN = "UNKNOWN"
+    ORDER_FAILED = "ORDER_FAILED"

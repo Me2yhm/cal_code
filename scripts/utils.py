@@ -86,10 +86,10 @@ def save_to_mongo(date, investor_id, results, collection: MongoClient, orient="r
     id = f"{date}_{investor_id}"
     match orient:
         case "row":
-            results_dic = results[COLUMNS[2:]].to_dict(orient="records")
+            results_dic = results.to_dict(orient="records")
             save_as_row(id, results_dic, collection)
         case "column":
-            results_dic = results[COLUMNS[2:]].to_dict(as_series=False)
+            results_dic = results.to_dict(as_series=False)
             record = {"_id": id, **results_dic}
             collection.update_many(
                 {"_id": id},
@@ -103,7 +103,7 @@ def save_to_mongo(date, investor_id, results, collection: MongoClient, orient="r
 def save_as_row(id: str, results_dic: list[dict], collection: MongoClient):
     operations = []
     for row in results_dic:
-        _id = f"{id}_{row['execute_time']}"
+        _id = f"{id}_{row['snap_time']}"
         operations.append(
             UpdateOne(
                 {"_id": _id},  # 查找条件，确保唯一性
