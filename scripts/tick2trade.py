@@ -706,13 +706,3 @@ def multi_main(
 
 if __name__ == "__main__":
     multi_main("vola", if_pickle=True, to_mongo=True, orient="row")
-    # results, all_success = parse_one_logfile(
-    #     "vola/logs2/arb2_20241010.log",
-    #     collection=MongoClient(os.getenv("MONGODB_URL")).Quote.tick2trade,
-    #     investor_id="logs2",
-    #     if_pickle=False,
-    #     orient="row",
-    # )
-    # print(results)
-    # print(all_success)
-    # run("vola/logs2", if_pickle=True, to_mongo=True, orient="row")
