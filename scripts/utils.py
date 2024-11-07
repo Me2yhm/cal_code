@@ -40,7 +40,7 @@ def get_date(logfile=Union[Path, str]):
         name = logfile.name
     else:
         name = logfile
-    return name.split("_")[-1].split(".")[0]
+    return int(name.split("_")[-1].split(".")[0])
 
 
 def others_price_better(order_price, current_price, direction):
@@ -103,10 +103,15 @@ def save_to_mongo(date, investor_id, results, collection: MongoClient, orient="r
 def save_as_row(id: str, results_dic: list[dict], collection: MongoClient):
     operations = []
     for row in results_dic:
-        _id = f"{id}_{row['snap_time']}"
+        filter_condition = {
+            "date": row["date"],
+            "investor_id": row["investor_id"],
+            "symbol": row["symbol"],
+            "snap_time": row["snap_time"],
+        }
         operations.append(
             UpdateOne(
-                {"_id": _id},  # 查找条件，确保唯一性
+                filter_condition,  # 查找条件，确保唯一性
                 {"$setOnInsert": row},  # 如果不存在则插入
                 upsert=True,
             )

@@ -7,31 +7,38 @@ from pymongo import MongoClient
 
 COLLECTION = MongoClient(os.getenv("MONGODB_URL")).Quote.Tick2Trade
 ROOT = Path(__file__).parent.parent
-MAX_SIZE = 500
+MAX_SIZE = 600
+TAIL_SIZE = 400
 COLUMNS = [
     "date",
     "investor_id",
     "snap_time",
+    "symbol",
     "order_sys_id",
     "tick2trade",
-    "tick2execute",
-    "execute2send",
-    "send2success",
+    "tick2signal",
+    "signal2execute",
+    "execute2order",
+    "order2send",
+    "send2sendok",
     "status",
 ]
 COLUMN_TYPES_PD = list(
     zip(
         COLUMNS,
         [
-            "<U10",
-            "<U10",
-            "<U10",
-            "<U10",
+            np.int64,
+            "<U25",
+            np.int64,
+            "<U25",
             np.int64,
             np.int64,
             np.int64,
             np.int64,
-            "<U20",
+            np.int64,
+            np.int64,
+            np.int64,
+            "<U25",
         ],
     )
 )
@@ -39,10 +46,13 @@ COLUMN_TYPES_PL = list(
     zip(
         COLUMNS,
         [
+            pl.Int64,
             pl.String,
+            pl.Int64,
             pl.String,
+            pl.Int64,
             pl.String,
-            pl.String,
+            pl.Int64,
             pl.Int64,
             pl.Int64,
             pl.Int64,
@@ -54,9 +64,9 @@ COLUMN_TYPES_PL = list(
 
 
 class OrderStatus:
-    SUCCESS = "SUCCESS"
-    FAILED_FOR_SNAP = "FAILED_FOR_SNAP"
-    FAILED_FOR_COMPLETION = "FAILED_FOR_COMPLETION"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED_FALSE_SIGNAL = "FAILED_FALSE_SIGNAL"
+    FAILED_NOT_FAST_ENOUGH = "FAILED_NOT_FAST_ENOUGH"
     DENIED = "DENIED"
     UKNOWN = "UNKNOWN"
     ORDER_FAILED = "ORDER_FAILED"

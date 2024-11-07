@@ -1,11 +1,11 @@
 import os
 import pickle
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
-from typing import Literal, Union
+from typing import Callable, Literal, Union
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,7 @@ from const import (
     COLUMN_TYPES_PD,
     COLUMN_TYPES_PL,
     MAX_SIZE,
+    TAIL_SIZE,
     ROOT,
     OrderStatus,
 )
@@ -36,16 +37,20 @@ logger.add(sys.stdout, level="SUCCESS")
 class LogParser:
     def __init__(self):
         # 结果
-        self.start_time = ""
         self.end_time = ""
+        self.tick_time = ""
+        self.start_time = ""  # signal time
         self.execute_time = ""
-        self.snap_time = ""
+        self.order_start_time = ""  # 委托下单
+        self.snap_time = 0
         self.execute_failed_time = ""
         self.tick_2_trade = 0
-        self.tick_2_execute = 0
-        self.execute_2_send = 0
-        self.order_sys_id = ""
-        self.delay = ""
+        self.tick_2_signal = 0
+        self.signal_2_execute = 0
+        self.execute_2_order = 0
+        self.order_2_send = 0
+        self.delay = 0  # sent to send ok
+        self.order_sys_id = 0
         self.status = OrderStatus.UKNOWN
 
         # 判断
@@ -78,12 +83,16 @@ class LogParser:
 
     def parse_start_execute(self, line: str):
         """解析开始执行行"""
+        logger.info(f"解析开始执行行: {line}")
         self.execute_time = line.split()[0]
-        self.tick_2_execute = cal_tick2trade(self.execute_time, self.start_time)
+
+    def parse_order_start(self, line: str):
+        """解析委托下单行"""
+        self.order_start_time = line.split()[0]
 
     def parse_order_send(self, line: str):
         """
-        解析委托行
+        解析委托发送行
         """
         logger.info(f"解析委托行: {line}")
         data = line.split()
@@ -102,8 +111,6 @@ class LogParser:
         self.order_price = float(order_price)
         self.local_order_id = local_order_id
         self.instruction = insturction
-        self.tick_2_trade = cal_tick2trade(end_time, self.start_time)
-        self.execute_2_send = cal_tick2trade(end_time, self.execute_time)
 
     def parse_order_filled(self, line: str):
         """
@@ -138,9 +145,9 @@ class LogParser:
                 self.order_sys_id = order_sys_id
             case "normal":
                 _, order_sys_id = data[-4].split(":")[-1].split("/")
-                self.order_sys_id = order_sys_id
+                self.order_sys_id = int(order_sys_id)
 
-    def parse_quotes(self, line: str):
+    def parse_quotes(self, line: str, kind: Literal["head", "tail"] = "tail"):
         """
         解析行情行
         """
@@ -153,14 +160,25 @@ class LogParser:
         current_price = data[-3]
         last_volume = data[-1]
         snap_time = data[5].split("/")[-1]
-
-        self.current_price = float(current_price)
-        self.last_volume = int(last_volume)
-        self.bid_price = float(bid_price)
-        self.ask_price = float(ask_price)
-        self.bid_volume = int(bid_volume)
-        self.ask_volume = int(ask_volume)
-        self.snap_time = snap_time
+        tick_time = data[0]
+        match kind:
+            case "tail":
+                logger.info(f"解析tail行情行: {line}")
+                self.current_price = float(current_price)
+                self.last_volume = int(last_volume)
+                self.bid_price = float(bid_price)
+                self.ask_price = float(ask_price)
+                self.bid_volume = int(bid_volume)
+                self.ask_volume = int(ask_volume)
+                if snap_time.isdigit():
+                    self.snap_time = int(snap_time)
+                else:
+                    self.snap_time = 0
+            case "head":
+                logger.info(f"解析head行情行: {line}")
+                self.tick_time = tick_time
+            case _:
+                logger.warning(f"未知的kind: {kind}")
 
     def parse_execute_failed(self, line: str):
         """
@@ -181,9 +199,19 @@ class LogParser:
         local_order_id = data[-6].split("/")[0].split(":")[-1]
         self.local_order_id = local_order_id
 
+    def parse_tick2trade(self):
+        self.tick_2_trade = cal_tick2trade(self.end_time, self.tick_time)
+        self.tick_2_signal = cal_tick2trade(self.start_time, self.tick_time)
+        self.signal_2_execute = cal_tick2trade(self.execute_time, self.start_time)
+        self.execute_2_order = cal_tick2trade(
+            self.order_start_time, self.execute_time
+        )  # 开始执行到委托下单时间
+        self.order_2_send = cal_tick2trade(self.end_time, self.execute_time)
+        # send to send ok is self.delay
+
 
 class ConditionSet:
-    current_conditon: str
+    current_conditon: Callable
 
     def __init__(self, parser: LogParser):
         self.current_conditon = self.is_signal
@@ -204,7 +232,7 @@ class ConditionSet:
         #     logger.warning(f"未找到目标合约: {line}")
         #     return False
         if "开始执行" in line:
-            self.current_conditon = self.is_order_send
+            self.current_conditon = self.is_order_start
             self.parse_func = self.parser.parse_start_execute
             return True
         elif (
@@ -218,6 +246,14 @@ class ConditionSet:
             self.current_conditon = self.stop
             self.parse_func = self.parser.parse_execute_failed
             self.parser.status = OrderStatus.DENIED
+        else:
+            return False
+
+    def is_order_start(self, line: str):
+        if "委托下单" in line:
+            self.current_conditon = self.is_order_send
+            self.parse_func = self.parser.parse_order_start
+            return True
         else:
             return False
 
@@ -271,7 +307,7 @@ class ConditionSet:
     def fast_status(self, line: str):
         if self.is_traded(line):
             self.current_conditon = self.stop
-            self.parser.status = OrderStatus.SUCCESS
+            self.parser.status = OrderStatus.SUCCEEDED
             self.parse_func = partial(self.parser.parse_order_response, kind="fast_rsp")
             return True
         elif self.is_failed(line):
@@ -285,7 +321,7 @@ class ConditionSet:
     def nomal_status(self, line: str):
         if self.is_execute_success(line):
             self.current_conditon = self.stop
-            self.parser.status = OrderStatus.SUCCESS
+            self.parser.status = OrderStatus.SUCCEEDED
             self.parse_func = partial(self.parser.parse_order_response, kind="normal")
             return True
         elif self.is_execute_failed(line):
@@ -370,19 +406,43 @@ class ConditionSet:
         return "限价" in line
 
 
+def parse_tail(lines: list[str], parser: LogParser, conditions):
+    for line in lines:
+        if conditions.current_conditon(line):
+            conditions.parse_func(line)
+        if conditions.quote:
+            if conditions.is_quote(line):
+                parser.parse_quotes(line)
+                conditions.quote = False
+        if conditions.current_conditon == conditions.stop and not conditions.quote:
+            break
+    return parser
+
+
+def parse_head(lines: list[str], parser: LogParser, conditions: ConditionSet):
+    conditions.current_conditon = conditions.is_signal
+    parse_snap = True
+    parse_signal = True
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i]
+        if "行情" in line and parse_snap:
+            parser.parse_quotes(line, kind="head")
+            parse_snap = False
+        elif conditions.is_signal(line) and parse_signal:
+            parser.parse_signal(line)
+            parse_signal = False
+    parser.parse_tick2trade()
+    return parser
+
+
 def parse_log(lines: list[str]):
     parser = LogParser()
     logger.info(f"开始解析{len(lines)}行日志")
-    conditons = ConditionSet(parser)
-    for line in lines:
-        if conditons.current_conditon(line):
-            conditons.parse_func(line)
-        if conditons.quote:
-            if conditons.is_quote(line):
-                parser.parse_quotes(line)
-                conditons.quote = False
-        if conditons.current_conditon == conditons.stop and not conditons.quote:
-            break
+    conditions = ConditionSet(parser)
+    conditions.current_conditon = conditions.is_execute
+    tail_lines = lines[-TAIL_SIZE:]
+    logger.info(tail_lines[0])
+    parser = parse_tail(tail_lines, parser, conditions)
     if (
         not parser.snap_time
         and parser.status != OrderStatus.DENIED
@@ -390,11 +450,13 @@ def parse_log(lines: list[str]):
     ):
         raise ValueError(
             f"未解析行情，可能解析失败：result: \
-{parser.snap_time,parser.order_sys_id,parser.tick_2_trade,parser.tick_2_execute,parser.execute_2_send,parser.delay,parser.status}, \
+{parser.snap_time,parser.order_sys_id,parser.tick_2_trade,parser.signal_2_execute,parser.order_2_send,parser.delay,parser.status}, \
 local_order_id: {parser.local_order_id} "
         )
     if parser.status == OrderStatus.UKNOWN and parser.has_order:
         parser.status = check_failed_status(parser)
+    head_lines = lines[:-TAIL_SIZE]
+    parser = parse_head(head_lines, parser, conditions)
     return parser
 
 
@@ -423,8 +485,8 @@ def check_failed_status(parser: LogParser):
     )
     if (accessed_volume) >= order_volume:
         # 用当前成交量和下单量作比较来判断是否被抢，而不是和0比较
-        return OrderStatus.FAILED_FOR_COMPLETION
-    return OrderStatus.FAILED_FOR_SNAP
+        return OrderStatus.FAILED_NOT_FAST_ENOUGH
+    return OrderStatus.FAILED_FALSE_SIGNAL
 
 
 def cal_tick2trade(end_time: str, start_time: str):
@@ -439,35 +501,13 @@ def cal_tick2trade(end_time: str, start_time: str):
     return end_ns - start_ns
 
 
-def multi_parse(log_lines: dict[int, list[str]], date: str, investor_id: str):
-    results = np.zeros((2000, len(COLUMNS)), dtype="<U10")
-    results[:, 0] = date
-    results[:, 1] = investor_id
-    futures = []
-    row_ind = 0
-    with ProcessPoolExecutor() as executor:
-        for index, lines in log_lines.items():
-            futures.append(executor.submit(parse_log, lines))
-        for future in as_completed(futures):
-            try:
-                if result := future.result():
-                    if result[-1] != OrderStatus.DENIED:
-                        results[row_ind, 2:] = result
-                        row_ind += 1
-            except Exception as e:
-                logger.error(f"解析失败: {e}: {result}")
-                continue
-    df = pd.DataFrame(results[:row_ind], columns=COLUMNS)
-    return df
-
-
 def single_parse(
     log_lines: dict[int, list[str]],
     date: str,
     investor_id: str,
     orient: Literal["row", "column"],
 ):
-    results = np.zeros((2000, len(COLUMNS)), dtype="<U20")
+    results = np.zeros((2000, len(COLUMNS)), dtype="<U25")
     results[:, 0] = date
     results[:, 1] = investor_id
     row_ind = 0
@@ -479,10 +519,13 @@ def single_parse(
             parser = parse_log(lines)
             result = (
                 parser.snap_time,
+                parser.symbol,
                 parser.order_sys_id,
                 parser.tick_2_trade,
-                parser.tick_2_execute,
-                parser.execute_2_send,
+                parser.tick_2_signal,
+                parser.signal_2_execute,
+                parser.execute_2_order,
+                parser.order_2_send,
                 parser.delay,
                 parser.status,
             )
@@ -497,7 +540,7 @@ def single_parse(
                     f"{date}_{investor_id} 执行失败,原因为: {parser.failed_reason}"
                 )
         except Exception as e:
-            logger.error(f"{date}_{investor_id}解析失败: {e}: {result}")
+            logger.error(f"{date}_{investor_id}解析失败: [{e.__class__}] {e}: {result}")
             all_success = False
             continue
     match orient:
@@ -511,22 +554,29 @@ def single_parse(
 
 
 def get_parse_data(logfile: str, pickle_file: str = "", if_pickle: bool = False):
+    original_lines = deque(maxlen=MAX_SIZE)
     matched_lines: dict[int, list[str]] = defaultdict(list)  # {匹配号：[匹配行]}
     with open(logfile, "r", encoding="utf-8") as f:
         lines = f.readlines()
         index = 0
         matched = defaultdict(int)
         for line in lines:
-            if "反向" in line or "正向" in line:
-                matched_lines[index].append(line)
+            original_lines.append(line)
+            if original_lines.__len__() == MAX_SIZE:
+                original_lines.popleft()
+            if "开始执行" in line:
                 matched[index] = 1
+                matched_lines[index] = original_lines.copy()
                 index += 1
             for ind in matched:
                 if matched[ind] > 0:
-                    matched_lines[ind].append(line)
-                    matched[ind] += 1
-                    if matched[ind] == MAX_SIZE:
+                    if matched[ind] == TAIL_SIZE:
                         matched[ind] = 0
+                        matched_lines[ind] = list(matched_lines[ind])
+                        continue
+                    matched[ind] += 1
+                    matched_lines[ind].append(line)
+
     if if_pickle:
         with open(pickle_file, "wb") as f:
             pickle.dump(matched_lines, f)
@@ -579,8 +629,8 @@ def run(
     if isinstance(directory, str):
         directory = Path(directory)
     investor_id = directory.name
-    success_path = ROOT / f"/cache/{investor_id}/{investor_id}_success_files.pkl"
-    failed_path = ROOT / f"/cache/{investor_id}/{investor_id}failed_files.pkl"
+    success_path = ROOT / f"cache/{investor_id}/{investor_id}_success_files.pkl"
+    failed_path = ROOT / f"cache/{investor_id}/{investor_id}failed_files.pkl"
     success_files, failed_files = get_record_lists(success_path, failed_path)
     collection = MongoClient(os.getenv("MONGODB_URL")).Quote.Tick2Trade
     for file in search_all_file(directory):
@@ -606,10 +656,10 @@ def run(
                 failed_files.append(file)
                 continue
     logger.success(
-        f"成功解析{len(success_files)}个日志文件，解析过的文件被保存在success_files.pkl中"
+        f"成功解析{len(success_files)}个日志文件，解析过的文件被保存在{success_path}l中"
     )
     logger.error(
-        f"解析失败{len(failed_files)}个日志文件，解析失败的文件被保存在failed_files.pkl中"
+        f"解析失败{len(failed_files)}个日志文件，解析失败的文件被保存在{failed_path}中"
     )
     logger.error(f"解析失败的文件: {failed_files}")
     with open(success_path, "wb") as f:
@@ -656,3 +706,13 @@ def multi_main(
 
 if __name__ == "__main__":
     multi_main("vola", if_pickle=True, to_mongo=True, orient="row")
+    # results, all_success = parse_one_logfile(
+    #     "vola/logs2/arb2_20241010.log",
+    #     collection=MongoClient(os.getenv("MONGODB_URL")).Quote.tick2trade,
+    #     investor_id="logs2",
+    #     if_pickle=False,
+    #     orient="row",
+    # )
+    # print(results)
+    # print(all_success)
+    # run("vola/logs2", if_pickle=True, to_mongo=True, orient="row")
