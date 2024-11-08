@@ -1,3 +1,3 @@
 #!/bin/bash
-python tick2trade.py
+python cal_code/tick2trade.py
 cron -f
