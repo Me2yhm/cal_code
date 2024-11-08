@@ -4,7 +4,7 @@ import sys
 from collections import defaultdict, deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
-from pathlib import Path
+from pathlib import PurePath as Path
 from typing import Callable, Literal, Union
 
 import numpy as np
@@ -708,4 +708,7 @@ def multi_main(
 
 
 if __name__ == "__main__":
+    import os
+
     multi_main("vola", if_pickle=True, to_mongo=True, orient="row")
+    os.system("tail -f ../logs/logs2/*.log")
