@@ -14,11 +14,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && sed -i 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources \
-    && apt update -y
+    && apt update -y\
+    && && apt-get install -y cron
 RUN --mount=type=cache,target=/root/.cache pip install -r cal_code/requirements.txt
 
 
 # 清理apt缓存，以减小镜像大小
 RUN apt clean && rm -rf /var/lib/apt/lists/*
+RUN echo "* * * * * cd /app && python cal_code/tick2trade.py >> /var/log/cron.log 2>&1" >> /etc/crontab
 # 设置容器启动时默认执行的命令
-CMD ["python", "cal_code/tick2trade.py"]
+CMD ["sh", "cal_code/start.sh"]
