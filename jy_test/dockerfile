@@ -21,6 +21,7 @@ RUN --mount=type=cache,target=/root/.cache pip install -r cal_code/requirements.
 
 # 清理apt缓存，以减小镜像大小
 RUN apt clean && rm -rf /var/lib/apt/lists/*
-RUN echo "*/5 * * * * cd /app && python cal_code/tick2trade.py >> /var/log/cron.log 2>&1" >> /etc/crontab
+RUN touch /var/log/cron.log
+RUN echo "*/5 * * * * root cd /app && python cal_code/tick2trade.py >> /var/log/cron.log 2>&1" >> /etc/crontab
 # 设置容器启动时默认执行的命令
 CMD ["sh", "cal_code/start.sh"]
