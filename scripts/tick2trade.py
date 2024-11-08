@@ -660,7 +660,7 @@ def run(
                 failed_files.append(file)
                 continue
     logger.success(
-        f"成功解析{len(success_files)}个日志文件，解析过的文件被保存在{success_path}l中"
+        f"成功解析{len(success_files)}个日志文件，解析过的文件被保存在{success_path}中"
     )
     logger.error(
         f"解析失败{len(failed_files)}个日志文件，解析失败的文件被保存在{failed_path}中"
@@ -709,4 +709,4 @@ def multi_main(
 
 
 if __name__ == "__main__":
-    multi_main("vola", if_pickle=True, to_mongo=True, orient="row")
+    multi_main("vola", if_pickle=True, to_mongo=False, orient="row")
