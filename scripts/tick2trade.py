@@ -709,4 +709,4 @@ def multi_main(
 
 
 if __name__ == "__main__":
-    multi_main("vola", if_pickle=True, to_mongo=False, orient="row")
+    multi_main("vola", if_pickle=True, to_mongo=True, orient="row")
