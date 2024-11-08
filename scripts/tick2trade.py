@@ -532,6 +532,7 @@ def single_parse(
                 parser.delay,
                 parser.status,
             )
+            assert parser.order_sys_id > 0, f"为解析出order_sys_id,可能是缺少委托回报"
             if (
                 result[-1] != OrderStatus.DENIED
                 and result[-1] != OrderStatus.ORDER_FAILED
@@ -708,7 +709,5 @@ def multi_main(
 
 
 if __name__ == "__main__":
-    import os
-
     multi_main("vola", if_pickle=True, to_mongo=True, orient="row")
-    os.system("tail -f ../logs/logs2/*.log")
+    os.system("find ./logs -type f -name '*.log' | xargs tail -f -n 10")
