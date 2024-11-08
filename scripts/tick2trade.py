@@ -142,7 +142,7 @@ class LogParser:
         match kind:
             case "fast_rsp":
                 order_sys_id = data[-8]
-                self.order_sys_id = order_sys_id
+                self.order_sys_id = int(order_sys_id)
             case "normal":
                 _, order_sys_id = data[-4].split(":")[-1].split("/")
                 self.order_sys_id = int(order_sys_id)
@@ -532,7 +532,7 @@ def single_parse(
                 parser.delay,
                 parser.status,
             )
-            assert parser.order_sys_id > 0, f"为解析出order_sys_id,可能是缺少委托回报"
+            assert parser.order_sys_id > 0, "为解析出order_sys_id,可能是缺少委托回报"
             if (
                 result[-1] != OrderStatus.DENIED
                 and result[-1] != OrderStatus.ORDER_FAILED
